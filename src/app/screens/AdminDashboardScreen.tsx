@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -17,7 +17,14 @@ import {
 } from 'lucide-react';
 import { PlayerDetailModal, PlayerRecord } from '../components/PlayerDetailModal';
 
-// ─── Mock Data ───────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const ADMIN_PASSWORD = 'mlnse184190';
+
+const AVATARS = ['👨‍💼', '👩‍🔬', '👨‍🏫', '👩‍💻', '👨‍🎓', '👩‍🎨', '👨‍🔧', '👩‍⚕️', '👨‍💻', '👩‍🏫', '👩‍🔬', '👨‍🎨'];
+
+// ─── Mock Data ────────────────────────────────────────────────────────────────
+
 const MOCK_PLAYERS: PlayerRecord[] = [
   {
     id: '1',
@@ -225,7 +232,72 @@ const MOCK_PLAYERS: PlayerRecord[] = [
   },
 ];
 
+// ─── API Helpers ──────────────────────────────────────────────────────────────
+
+function generateMarxComment(endingType: string): string {
+  switch (endingType) {
+    case 'success':
+      return 'Cân bằng xuất sắc LLSX và QHSX. Người chơi đã chứng minh LLSX và QHSX phát triển hài hòa là điều kiện tiên quyết để tiến lên Chủ nghĩa Xã hội theo đúng quy luật lịch sử Marx đã chỉ ra.';
+    case 'inequality':
+      return 'Phát triển LLSX mà thiếu điều chỉnh QHSX dẫn đến bất bình đẳng gia tăng. Đây là mâu thuẫn cốt lõi giữa lực lượng sản xuất hiện đại và quan hệ sản xuất lạc hậu mà Marx đã phân tích trong Tư bản luận.';
+    case 'dependency':
+      return 'Bẫy lệ thuộc — thiếu năng lực tự chủ công nghệ nội sinh. Lênin đã cảnh báo về nguy cơ "lệ thuộc QHSX vào LLSX ngoại lai" trong lý thuyết chủ nghĩa đế quốc. Chỉ số I thấp là biểu hiện rõ nhất.';
+    case 'collapse':
+      return 'Mâu thuẫn LLSX-QHSX bùng nổ dẫn đến sụp đổ hệ thống. Theo quy luật thống nhất và đấu tranh của các mặt đối lập, khi mâu thuẫn tích lũy đến đỉnh điểm mà không được giải quyết, hệ thống tất yếu tan rã.';
+    default:
+      return 'Người chơi đang trong quá trình xây dựng. Kết quả cuối cùng sẽ phản ánh mức độ vận dụng lý luận Mác-Lênin vào thực tiễn quản lý kinh tế-xã hội.';
+  }
+}
+
+interface ApiResult {
+  playerName: string;
+  roundCompleted: number;
+  endingType: string;
+  statT: number;
+  statP: number;
+  statE: number;
+  statI: number;
+  statGap: number;
+  autoScore: number;
+  stabilityScore: number;
+  budgetRemaining: number;
+  createdAt: string;
+}
+
+function mapApiToPlayerRecord(item: ApiResult, index: number): PlayerRecord {
+  const endingType = (['success', 'inequality', 'dependency', 'collapse', 'playing'].includes(item.endingType)
+    ? item.endingType
+    : 'playing') as PlayerRecord['endingType'];
+
+  const status: PlayerRecord['status'] =
+    endingType === 'playing' ? 'playing' : endingType === 'collapse' ? 'gameover' : 'completed';
+
+  return {
+    id: String(index + 1),
+    name: item.playerName || `Người chơi ${index + 1}`,
+    avatar: AVATARS[index % AVATARS.length],
+    characterId: 'unknown',
+    currentRound: item.roundCompleted,
+    completedRound: item.roundCompleted,
+    endingType,
+    autoScore: item.autoScore ?? 0,
+    stability: item.stabilityScore ?? 0,
+    playTime: 'N/A',
+    status,
+    stats: {
+      T: item.statT ?? 0,
+      P: item.statP ?? 0,
+      E: item.statE ?? 0,
+      I: item.statI ?? 0,
+      Gap: item.statGap ?? 0,
+    },
+    budget: item.budgetRemaining ?? 0,
+    marxComment: generateMarxComment(endingType),
+  };
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
+
 type SortKey =
   | 'name'
   | 'completedRound'
@@ -244,6 +316,7 @@ type EndingFilter =
   | 'playing';
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
 const ENDING_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
   success: {
     label: 'CNH-HĐH Thành công',
@@ -401,19 +474,116 @@ function SortIcon({ col, active, dir }: { col: string; active: boolean; dir: Sor
   );
 }
 
+// ─── Password Gate Component ─────────────────────────────────────────────────
+
+function PasswordGate({ onSuccess }: { onSuccess: () => void }) {
+  const [inputPassword, setInputPassword] = useState('');
+  const [error, setError] = useState(false);
+
+  const handleAuth = () => {
+    if (inputPassword === ADMIN_PASSWORD) {
+      onSuccess();
+    } else {
+      setError(true);
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center"
+      style={{ background: 'linear-gradient(135deg, #030213 0%, #0a1628 100%)' }}
+    >
+      <div
+        className="p-8 rounded-2xl border text-center w-80"
+        style={{ background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(34,211,238,0.3)' }}
+      >
+        <div className="text-4xl mb-4">🛡️</div>
+        <h2 className="text-lg mb-1" style={{ color: '#22d3ee' }}>
+          Admin Access
+        </h2>
+        <p className="text-xs mb-5" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          Chỉ dành cho Giảng viên
+        </p>
+        <input
+          type="password"
+          value={inputPassword}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+            setInputPassword(e.target.value);
+            setError(false);
+          }}
+          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleAuth()}
+          placeholder="Nhập mật khẩu..."
+          className="w-full px-4 py-2.5 rounded-lg mb-3 outline-none text-center text-sm"
+          style={{
+            background: 'rgba(255,255,255,0.08)',
+            border: `1px solid ${error ? '#ef4444' : 'rgba(255,255,255,0.2)'}`,
+            color: '#fff',
+            fontFamily: 'Be Vietnam Pro, sans-serif',
+          }}
+        />
+        {error && (
+          <p className="text-xs text-red-400 mb-3">Sai mật khẩu. Vui lòng thử lại.</p>
+        )}
+        <button
+          onClick={handleAuth}
+          className="w-full py-2.5 rounded-lg text-sm font-medium transition-all hover:opacity-90 active:scale-95"
+          style={{
+            background: 'linear-gradient(90deg, #06b6d4, #22d3ee)',
+            color: '#000',
+            fontFamily: 'Be Vietnam Pro, sans-serif',
+          }}
+        >
+          Xác nhận
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
+
 export function AdminDashboardScreen() {
   const navigate = useNavigate();
+
+  // ── Auth state ──
+  const [authenticated, setAuthenticated] = useState(false);
+
+  // ── Data state ──
+  const [players, setPlayers] = useState<PlayerRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [usingMock, setUsingMock] = useState(false);
+
+  // ── UI state ──
   const [search, setSearch] = useState('');
   const [endingFilter, setEndingFilter] = useState<EndingFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>('autoScore');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerRecord | null>(null);
-  const [players, setPlayers] = useState<PlayerRecord[]>(MOCK_PLAYERS);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [exportFlash, setExportFlash] = useState(false);
 
-  // ─── Derived stats ───
+  // ── Fetch from API when authenticated ── (hook must be before any return)
+  useEffect(() => {
+    if (!authenticated) return;
+    setLoading(true);
+    const apiBase = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8080';
+    fetch(`${apiBase}/api/results`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: ApiResult[]) => {
+        setPlayers(data.map(mapApiToPlayerRecord));
+        setUsingMock(false);
+      })
+      .catch(() => {
+        setPlayers(MOCK_PLAYERS);
+        setUsingMock(true);
+      })
+      .finally(() => setLoading(false));
+  }, [authenticated]);
+
+  // ── Derived stats (plain vars, not hooks — must be before useMemo below) ──
   const totalPlayers = players.length;
   const avgScore =
     players.length > 0
@@ -422,7 +592,7 @@ export function AdminDashboardScreen() {
   const successCount = players.filter((p) => p.endingType === 'success').length;
   const gameoverCount = players.filter((p) => p.status === 'gameover').length;
 
-  // ─── Filtered + sorted data ───
+  // ── useMemo must be before any conditional return ──
   const filtered = useMemo(() => {
     let data = [...players];
     if (search.trim()) {
@@ -506,6 +676,11 @@ export function AdminDashboardScreen() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // ── Conditional render — all hooks are above this line ──
+  if (!authenticated) {
+    return <PasswordGate onSuccess={() => setAuthenticated(true)} />;
+  }
 
   const TH = ({
     label,
@@ -610,8 +785,20 @@ export function AdminDashboardScreen() {
               </div>
             </div>
 
-            {/* Right: admin badge + exit */}
+            {/* Right: mock notice + admin badge + exit */}
             <div className="flex items-center gap-3">
+              {usingMock && (
+                <span
+                  className="hidden sm:inline text-xs px-2.5 py-1 rounded-full border"
+                  style={{
+                    background: 'rgba(245,158,11,0.1)',
+                    borderColor: 'rgba(245,158,11,0.3)',
+                    color: '#f59e0b',
+                  }}
+                >
+                  Đang dùng dữ liệu mẫu
+                </span>
+              )}
               <div
                 className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border"
                 style={{
@@ -665,18 +852,18 @@ export function AdminDashboardScreen() {
               label="Số Ending Thành công"
               value={successCount}
               color="#10b981"
-              sub={`${Math.round((successCount / totalPlayers) * 100)}%`}
+              sub={totalPlayers > 0 ? `${Math.round((successCount / totalPlayers) * 100)}%` : '0%'}
             />
             <StatCard
               icon={<AlertTriangle size={18} />}
               label="Số Game Over"
               value={gameoverCount}
               color="#ef4444"
-              sub={`${Math.round((gameoverCount / totalPlayers) * 100)}%`}
+              sub={totalPlayers > 0 ? `${Math.round((gameoverCount / totalPlayers) * 100)}%` : '0%'}
             />
           </motion.div>
 
-          {/* ══════════ SEARCH & FILTER BAR ══��═══════ */}
+          {/* ══════════ SEARCH & FILTER BAR ══════════ */}
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -801,165 +988,182 @@ export function AdminDashboardScreen() {
             <div className="overflow-x-auto">
               <table className="w-full table-auto">
                 <tbody>
-                  <AnimatePresence>
-                    {filtered.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={9}
-                          className="text-center py-16 text-sm"
-                          style={{ color: 'rgba(255,255,255,0.3)' }}
-                        >
-                          Không tìm thấy kết quả nào.
-                        </td>
+                  {loading ? (
+                    /* ── Loading skeleton ── */
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                        {Array.from({ length: 9 }).map((_, j) => (
+                          <td key={j} className="px-4 py-4">
+                            <div
+                              className="h-3 rounded animate-pulse"
+                              style={{
+                                background: 'rgba(255,255,255,0.07)',
+                                width: j === 1 ? '140px' : j === 0 ? '24px' : '80px',
+                              }}
+                            />
+                          </td>
+                        ))}
                       </tr>
-                    ) : (
-                      filtered.map((player, idx) => (
-                        <motion.tr
-                          key={player.id}
-                          initial={{ opacity: 0, x: -8 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 8 }}
-                          transition={{ delay: idx * 0.03 }}
-                          className="group border-b transition-all duration-200 cursor-default"
-                          style={{
-                            borderColor: 'rgba(255,255,255,0.05)',
-                          }}
-                          onMouseEnter={(e) => {
-                            (e.currentTarget as HTMLTableRowElement).style.background =
-                              'rgba(34,211,238,0.04)';
-                            (e.currentTarget as HTMLTableRowElement).style.boxShadow =
-                              'inset 3px 0 0 #22d3ee';
-                          }}
-                          onMouseLeave={(e) => {
-                            (e.currentTarget as HTMLTableRowElement).style.background = 'transparent';
-                            (e.currentTarget as HTMLTableRowElement).style.boxShadow = 'none';
-                          }}
-                        >
-                          {/* STT */}
-                          <td className="px-4 py-3.5 w-12">
-                            <span
-                              className="text-xs w-6 h-6 rounded flex items-center justify-center"
-                              style={{
-                                background: 'rgba(34,211,238,0.1)',
-                                color: '#22d3ee',
-                                fontFamily: 'Be Vietnam Pro, sans-serif',
-                              }}
-                            >
-                              {idx + 1}
-                            </span>
+                    ))
+                  ) : (
+                    <AnimatePresence>
+                      {filtered.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={9}
+                            className="text-center py-16 text-sm"
+                            style={{ color: 'rgba(255,255,255,0.3)' }}
+                          >
+                            Không tìm thấy kết quả nào.
                           </td>
-
-                          {/* Name + avatar */}
-                          <td className="px-4 py-3.5">
-                            <div className="flex items-center gap-3">
-                              <div
-                                className="w-9 h-9 rounded-full flex items-center justify-center text-lg flex-shrink-0 border"
-                                style={{
-                                  background: 'rgba(255,255,255,0.05)',
-                                  borderColor: 'rgba(255,255,255,0.1)',
-                                }}
-                              >
-                                {player.avatar}
-                              </div>
+                        </tr>
+                      ) : (
+                        filtered.map((player: PlayerRecord, idx: number) => (
+                          <motion.tr
+                            key={player.id}
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 8 }}
+                            transition={{ delay: idx * 0.03 }}
+                            className="group border-b transition-all duration-200 cursor-default"
+                            style={{
+                              borderColor: 'rgba(255,255,255,0.05)',
+                            }}
+                            onMouseEnter={(e: React.MouseEvent<HTMLTableRowElement>) => {
+                              e.currentTarget.style.background = 'rgba(34,211,238,0.04)';
+                              e.currentTarget.style.boxShadow = 'inset 3px 0 0 #22d3ee';
+                            }}
+                            onMouseLeave={(e: React.MouseEvent<HTMLTableRowElement>) => {
+                              e.currentTarget.style.background = 'transparent';
+                              e.currentTarget.style.boxShadow = 'none';
+                            }}
+                          >
+                            {/* STT */}
+                            <td className="px-4 py-3.5 w-12">
                               <span
-                                className="text-sm"
-                                style={{
-                                  color: 'rgba(255,255,255,0.9)',
-                                  fontFamily: 'Be Vietnam Pro, sans-serif',
-                                }}
-                              >
-                                {player.name}
-                              </span>
-                            </div>
-                          </td>
-
-                          {/* Round */}
-                          <td className="px-4 py-3.5">
-                            <span
-                              className="text-sm"
-                              style={{ color: 'rgba(255,255,255,0.7)', fontFamily: 'Be Vietnam Pro, sans-serif' }}
-                            >
-                              {player.completedRound}
-                              <span style={{ color: 'rgba(255,255,255,0.3)' }}>/15</span>
-                            </span>
-                          </td>
-
-                          {/* Ending badge */}
-                          <td className="px-4 py-3.5">
-                            <EndingBadge type={player.endingType} />
-                          </td>
-
-                          {/* Auto score */}
-                          <td className="px-4 py-3.5 min-w-32">
-                            <ScoreBar score={player.autoScore} />
-                          </td>
-
-                          {/* Stability */}
-                          <td className="px-4 py-3.5">
-                            <span
-                              className="text-sm flex items-center gap-1"
-                              style={{
-                                color: player.stability >= 0 ? '#10b981' : '#ef4444',
-                                fontFamily: 'Be Vietnam Pro, sans-serif',
-                              }}
-                            >
-                              {player.stability >= 0 ? '+' : ''}{player.stability}
-                            </span>
-                          </td>
-
-                          {/* Play time */}
-                          <td className="px-4 py-3.5">
-                            <span className="text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                              {player.playTime}
-                            </span>
-                          </td>
-
-                          {/* Status */}
-                          <td className="px-4 py-3.5">
-                            <StatusBadge status={player.status} />
-                          </td>
-
-                          {/* Actions */}
-                          <td className="px-4 py-3.5">
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => setSelectedPlayer(player)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:scale-105"
+                                className="text-xs w-6 h-6 rounded flex items-center justify-center"
                                 style={{
                                   background: 'rgba(34,211,238,0.1)',
-                                  border: '1px solid rgba(34,211,238,0.25)',
                                   color: '#22d3ee',
                                   fontFamily: 'Be Vietnam Pro, sans-serif',
                                 }}
                               >
-                                <Eye size={12} />
-                                Xem
-                              </button>
-                              <button
-                                onClick={() => handleDelete(player.id)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:scale-105"
+                                {idx + 1}
+                              </span>
+                            </td>
+
+                            {/* Name + avatar */}
+                            <td className="px-4 py-3.5">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-9 h-9 rounded-full flex items-center justify-center text-lg shrink-0 border"
+                                  style={{
+                                    background: 'rgba(255,255,255,0.05)',
+                                    borderColor: 'rgba(255,255,255,0.1)',
+                                  }}
+                                >
+                                  {player.avatar}
+                                </div>
+                                <span
+                                  className="text-sm"
+                                  style={{
+                                    color: 'rgba(255,255,255,0.9)',
+                                    fontFamily: 'Be Vietnam Pro, sans-serif',
+                                  }}
+                                >
+                                  {player.name}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Round */}
+                            <td className="px-4 py-3.5">
+                              <span
+                                className="text-sm"
+                                style={{ color: 'rgba(255,255,255,0.7)', fontFamily: 'Be Vietnam Pro, sans-serif' }}
+                              >
+                                {player.completedRound}
+                                <span style={{ color: 'rgba(255,255,255,0.3)' }}>/15</span>
+                              </span>
+                            </td>
+
+                            {/* Ending badge */}
+                            <td className="px-4 py-3.5">
+                              <EndingBadge type={player.endingType} />
+                            </td>
+
+                            {/* Auto score */}
+                            <td className="px-4 py-3.5 min-w-32">
+                              <ScoreBar score={player.autoScore} />
+                            </td>
+
+                            {/* Stability */}
+                            <td className="px-4 py-3.5">
+                              <span
+                                className="text-sm flex items-center gap-1"
                                 style={{
-                                  background:
-                                    deleteConfirm === player.id
-                                      ? 'rgba(239,68,68,0.2)'
-                                      : 'rgba(255,255,255,0.05)',
-                                  border:
-                                    deleteConfirm === player.id
-                                      ? '1px solid rgba(239,68,68,0.4)'
-                                      : '1px solid rgba(255,255,255,0.1)',
-                                  color: deleteConfirm === player.id ? '#ef4444' : 'rgba(255,255,255,0.4)',
+                                  color: player.stability >= 0 ? '#10b981' : '#ef4444',
                                   fontFamily: 'Be Vietnam Pro, sans-serif',
                                 }}
                               >
-                                <Trash2 size={12} />
-                                {deleteConfirm === player.id ? 'Chắc chắn?' : 'Xóa'}
-                              </button>
-                            </div>
-                          </td>
-                        </motion.tr>
-                      ))
-                    )}
-                  </AnimatePresence>
+                                {player.stability >= 0 ? '+' : ''}{player.stability}
+                              </span>
+                            </td>
+
+                            {/* Play time */}
+                            <td className="px-4 py-3.5">
+                              <span className="text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                {player.playTime}
+                              </span>
+                            </td>
+
+                            {/* Status */}
+                            <td className="px-4 py-3.5">
+                              <StatusBadge status={player.status} />
+                            </td>
+
+                            {/* Actions */}
+                            <td className="px-4 py-3.5">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setSelectedPlayer(player)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:scale-105"
+                                  style={{
+                                    background: 'rgba(34,211,238,0.1)',
+                                    border: '1px solid rgba(34,211,238,0.25)',
+                                    color: '#22d3ee',
+                                    fontFamily: 'Be Vietnam Pro, sans-serif',
+                                  }}
+                                >
+                                  <Eye size={12} />
+                                  Xem
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(player.id)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:scale-105"
+                                  style={{
+                                    background:
+                                      deleteConfirm === player.id
+                                        ? 'rgba(239,68,68,0.2)'
+                                        : 'rgba(255,255,255,0.05)',
+                                    border:
+                                      deleteConfirm === player.id
+                                        ? '1px solid rgba(239,68,68,0.4)'
+                                        : '1px solid rgba(255,255,255,0.1)',
+                                    color: deleteConfirm === player.id ? '#ef4444' : 'rgba(255,255,255,0.4)',
+                                    fontFamily: 'Be Vietnam Pro, sans-serif',
+                                  }}
+                                >
+                                  <Trash2 size={12} />
+                                  {deleteConfirm === player.id ? 'Chắc chắn?' : 'Xóa'}
+                                </button>
+                              </div>
+                            </td>
+                          </motion.tr>
+                        ))
+                      )}
+                    </AnimatePresence>
+                  )}
                 </tbody>
               </table>
             </div>

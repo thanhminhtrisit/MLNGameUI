@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 export interface GameStats {
   T: number; // Technology Level
@@ -13,6 +13,10 @@ export interface GameState {
   budget: number;
   labor: number;
   stats: GameStats;
+  tUrban: number;
+  tAgri: number;
+  persistentPenalty: number;
+  historyLog: Array<{ round: number; T: number; P: number; E: number; I: number; Gap: number; budget: number }>;
   eventLog: Array<{ round: number; message: string }>;
   isGameOver: boolean;
   endingType: string | null;
@@ -30,19 +34,25 @@ interface GameContextType {
   resetGame: () => void;
   getStability: () => number;
   setPlayerInfo: (name: string, character: string) => void;
+  updateRegionTech: (urbanDelta: number, agriDelta: number) => void;
+  setPersistentPenalty: (amount: number) => void;
 }
 
 const initialGameState: GameState = {
   round: 1,
-  budget: 1000,
+  budget: 1500,
   labor: 100,
   stats: {
-    T: 50,
-    P: 50,
-    E: 60,
-    I: 40,
-    Gap: 30,
+    T: 30,
+    P: 20,
+    E: 70,
+    I: 10,
+    Gap: 35,
   },
+  tUrban: 50,
+  tAgri: 15,
+  persistentPenalty: 0,
+  historyLog: [],
   eventLog: [],
   isGameOver: false,
   endingType: null,
@@ -52,11 +62,26 @@ const initialGameState: GameState = {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
+const getSavedState = (): GameState => {
+  try {
+    const saved = localStorage.getItem('vnm2045_gameState');
+    if (saved) {
+      const parsed = JSON.parse(saved) as GameState;
+      if (!parsed.isGameOver) return parsed;
+    }
+  } catch {}
+  return initialGameState;
+};
+
 export function GameProvider({ children }: { children: ReactNode }) {
-  const [gameState, setGameState] = useState<GameState>(initialGameState);
+  const [gameState, setGameState] = useState<GameState>(getSavedState);
+
+  useEffect(() => {
+    localStorage.setItem('vnm2045_gameState', JSON.stringify(gameState));
+  }, [gameState]);
 
   const getStability = () => {
-    return gameState.stats.E * 0.7 - gameState.stats.Gap * 0.3;
+    return Math.round(gameState.stats.E * 0.7 - gameState.stats.Gap * 0.3);
   };
 
   const updateStats = (changes: Partial<GameStats>) => {
@@ -64,12 +89,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
       ...prev,
       stats: {
         ...prev.stats,
-        ...changes,
-        T: Math.max(0, Math.min(100, (changes.T !== undefined ? changes.T : prev.stats.T))),
-        P: Math.max(0, Math.min(100, (changes.P !== undefined ? changes.P : prev.stats.P))),
-        E: Math.max(0, Math.min(100, (changes.E !== undefined ? changes.E : prev.stats.E))),
-        I: Math.max(0, Math.min(100, (changes.I !== undefined ? changes.I : prev.stats.I))),
-        Gap: Math.max(0, Math.min(100, (changes.Gap !== undefined ? changes.Gap : prev.stats.Gap))),
+        T: Math.max(0, Math.min(100, prev.stats.T + (changes.T ?? 0))),
+        P: Math.max(0, Math.min(100, prev.stats.P + (changes.P ?? 0))),
+        E: Math.max(0, Math.min(100, prev.stats.E + (changes.E ?? 0))),
+        I: Math.max(0, Math.min(100, prev.stats.I + (changes.I ?? 0))),
+        Gap: Math.max(0, Math.min(100, prev.stats.Gap + (changes.Gap ?? 0))),
       },
     }));
   };
@@ -90,12 +114,35 @@ export function GameProvider({ children }: { children: ReactNode }) {
   };
 
   const nextRound = () => {
-    setGameState(prev => ({
-      ...prev,
-      round: prev.round + 1,
-      budget: prev.budget + 200,
-      labor: prev.labor + 20,
-    }));
+    setGameState(prev => {
+      const newGap = Math.abs(prev.tUrban - prev.tAgri);
+      const newE = Math.max(0, Math.min(100, prev.stats.E));
+      const budgetIncome = prev.stats.P * 10;
+      const snapshot = {
+        round: prev.round,
+        T: prev.stats.T,
+        P: prev.stats.P,
+        E: newE,
+        I: prev.stats.I,
+        Gap: newGap,
+        budget: prev.budget,
+      };
+      const penalty = prev.stats.I > 30 ? 0 : prev.persistentPenalty;
+      const newPersistentPenalty = prev.stats.I > 30 ? 0 : prev.persistentPenalty;
+      return {
+        ...prev,
+        round: prev.round + 1,
+        budget: Math.max(0, prev.budget + budgetIncome - penalty),
+        labor: 100,
+        persistentPenalty: newPersistentPenalty,
+        stats: {
+          ...prev.stats,
+          E: newE,
+          Gap: newGap,
+        },
+        historyLog: [...prev.historyLog, snapshot],
+      };
+    });
   };
 
   const endGame = (endingType: string) => {
@@ -107,6 +154,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   };
 
   const resetGame = () => {
+    localStorage.removeItem('vnm2045_gameState');
     setGameState(initialGameState);
   };
 
@@ -115,6 +163,29 @@ export function GameProvider({ children }: { children: ReactNode }) {
       ...prev,
       playerName: name,
       selectedCharacter: character,
+    }));
+  };
+
+  const updateRegionTech = (urbanDelta: number, agriDelta: number) => {
+    setGameState(prev => {
+      const newUrban = prev.tUrban + urbanDelta;
+      const newAgri = prev.tAgri + agriDelta;
+      return {
+        ...prev,
+        tUrban: newUrban,
+        tAgri: newAgri,
+        stats: {
+          ...prev.stats,
+          Gap: Math.abs(newUrban - newAgri),
+        },
+      };
+    });
+  };
+
+  const setPersistentPenalty = (amount: number) => {
+    setGameState(prev => ({
+      ...prev,
+      persistentPenalty: amount,
     }));
   };
 
@@ -130,6 +201,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         resetGame,
         getStability,
         setPlayerInfo,
+        updateRegionTech,
+        setPersistentPenalty,
       }}
     >
       {children}

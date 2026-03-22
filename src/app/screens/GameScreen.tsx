@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Coins, Users, Activity, Sun, Moon } from 'lucide-react';
 import { useGame } from '../context/GameContext';
@@ -6,11 +6,12 @@ import { CircularGauge } from '../components/CircularGauge';
 import { StabilityMeter } from '../components/StabilityMeter';
 import { PolicyCard, Policy } from '../components/PolicyCard';
 import { VietnamMap } from '../components/VietnamMap';
-import { EventModal, GameEvent } from '../components/EventModal';
+import { EventModal } from '../components/EventModal';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ScrollArea } from '../components/ui/scroll-area';
 import { useTheme } from 'next-themes';
+import { GameEvent, getFixedEvent, getRandomEvent } from '../data/events';
 
 // Sample policies
 const policies: Policy[] = [
@@ -64,80 +65,141 @@ const policies: Policy[] = [
   },
 ];
 
-// Sample events
-const sampleEvents: GameEvent[] = [
-  {
-    id: 'fdi_wave',
-    type: 'fixed',
-    title: 'Làn sóng FDI',
-    icon: '⚠️',
-    narrative: 'Các tập đoàn công nghệ lớn muốn đầu tư vào Việt Nam. Họ mang công nghệ cao nhưng đòi hỏi ưu đãi thuế và lao động giá rẻ.',
-    moralJustification: 'Vốn ngoại là lực lượng sản xuất hiện đại nhưng có thể tạo quan hệ sản xuất lệ thuộc.',
-    choices: [
-      {
-        label: 'Chấp nhận với điều kiện',
-        description: 'Yêu cầu chuyển giao công nghệ và đào tạo',
-        impact: { T: 10, I: 5, E: -5, budget: 100 },
-      },
-      {
-        label: 'Từ chối, tự phát triển',
-        description: 'Tập trung nguồn lực cho doanh nghiệp nội địa',
-        impact: { I: 8, E: 5, T: -3, budget: -50 },
-      },
-    ],
-  },
-  {
-    id: 'class_unrest',
-    type: 'random',
-    title: 'Bạo động giai cấp',
-    icon: '🚨',
-    narrative: 'Khoảng cách thu nhập giữa thành thị và nông thôn gây bất ổn xã hội. Người nông dân yêu cầu chính sách ưu tiên.',
-    moralJustification: 'Mâu thuẫn giai cấp là động lực lịch sử nhưng cần điều hoà để tránh tan rã.',
-    choices: [
-      {
-        label: 'Tăng trợ cấp nông thôn',
-        description: 'Chi ngân sách lớn cho phúc lợi nông thôn',
-        impact: { E: 20, Gap: -15, budget: -200 },
-      },
-      {
-        label: 'Đẩy nhanh CNH nông nghiệp',
-        description: 'Đầu tư công nghệ để nâng năng suất',
-        impact: { T: 8, P: 10, Gap: -8, budget: -150, labor: -20 },
-      },
-    ],
-  },
-];
-
 export function GameScreen() {
   const navigate = useNavigate();
-  const { gameState, updateStats, updateResources, addEvent, nextRound, getStability } = useGame();
+  const {
+    gameState,
+    updateStats,
+    updateResources,
+    addEvent,
+    nextRound,
+    getStability,
+    setPersistentPenalty,
+    updateRegionTech,
+  } = useGame();
   const { theme, setTheme } = useTheme();
+
+  const [usedEventIds, setUsedEventIds] = useState<string[]>([]);
   const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
+  const [eventPhase, setEventPhase] = useState<'event' | 'policy' | null>(null);
+  const [prevStats, setPrevStats] = useState(gameState.stats);
 
   const stability = getStability();
 
-  // Check for game over conditions
-  useEffect(() => {
-    if (gameState.round > 15) {
-      determineEnding();
-    } else if (stability < -30) {
-      navigate('/ending?type=collapse');
-    }
-  }, [gameState.round, stability]);
+  // ── Determine ending at round 15 ──────────────────────────────────────────
 
-  const determineEnding = () => {
+  const determineEnding = async () => {
     const { T, P, E, I, Gap } = gameState.stats;
-    
-    if (T > 80 && P > 75 && E > 70 && Gap < 20) {
-      navigate('/ending?type=success');
-    } else if (Gap > 60 || E < 30) {
-      navigate('/ending?type=inequality');
-    } else if (I < 30 && T < 50) {
-      navigate('/ending?type=dependency');
+    let endingType: string;
+
+    if (T >= 80 && I >= 60 && E >= 65 && Gap <= 25) {
+      endingType = 'success';
+    } else if (T >= 70 && (Gap >= 50 || E < 40)) {
+      endingType = 'inequality';
+    } else if (P >= 70 && I < 30) {
+      endingType = 'dependency';
     } else {
-      navigate('/ending?type=success');
+      endingType = 'inequality';
     }
+
+    const apiUrl = (import.meta as any).env?.VITE_API_URL;
+    if (apiUrl) {
+      try {
+        await fetch(`${apiUrl}/results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playerName: gameState.playerName,
+            selectedCharacter: gameState.selectedCharacter,
+            endingType,
+            stats: gameState.stats,
+            round: gameState.round,
+            historyLog: gameState.historyLog,
+          }),
+        });
+      } catch {
+        // Không block navigation nếu API lỗi
+      }
+    }
+
+    navigate(`/ending?type=${endingType}`);
   };
+
+  // ── Phase 1: Nhấn "Kết thúc vòng" lần đầu (eventPhase === null) ──────────
+
+  const handleEndRound = () => {
+    const snapshot = gameState.stats;
+    setPrevStats(snapshot);
+
+    const fixed = getFixedEvent(gameState.round);
+    if (fixed) {
+      setCurrentEvent(fixed);
+      setEventPhase('event');
+      return;
+    }
+
+    const random = getRandomEvent(gameState.stats, gameState.round, prevStats, usedEventIds);
+    if (random) {
+      setCurrentEvent(random);
+      setEventPhase('event');
+      return;
+    }
+
+    setEventPhase('policy');
+  };
+
+  // ── Phase 2: Xử lý lựa chọn event ────────────────────────────────────────
+
+  const handleEventChoice = (choiceIndex: 0 | 1) => {
+    if (!currentEvent) return;
+
+    const choice = currentEvent.choices[choiceIndex];
+    const { budget, labor, persistentPenalty: penalty, tUrban, tAgri, ...statsImpact } = choice.impact;
+
+    // Áp dụng delta stats (T, P, E, I, Gap)
+    const hasStatsDelta = Object.values(statsImpact).some((v) => v !== undefined);
+    if (hasStatsDelta) updateStats(statsImpact);
+
+    // Áp dụng budget/labor
+    if (budget) updateResources(budget, 0);
+    if (labor) updateResources(0, labor);
+
+    // Xử lý đặc biệt: persistentPenalty
+    if (penalty !== undefined) setPersistentPenalty(penalty);
+
+    // Xử lý đặc biệt: tUrban / tAgri
+    if (tUrban !== undefined || tAgri !== undefined) {
+      updateRegionTech(tUrban ?? 0, tAgri ?? 0);
+    }
+
+    addEvent(`📋 ${currentEvent.title}: ${choice.label}`);
+    setUsedEventIds((prev: string[]) => [...prev, currentEvent.id]);
+    setCurrentEvent(null);
+    setEventPhase('policy');
+  };
+
+  // ── Phase 3: Nhấn "Kết thúc vòng" ở policy phase ─────────────────────────
+
+  const handleEndRoundPolicy = () => {
+    const S = gameState.stats.E * 0.7 - gameState.stats.Gap * 0.3;
+
+    if (S < -20) {
+      navigate('/ending?type=collapse');
+      return;
+    }
+
+    if (gameState.round >= 15) {
+      determineEnding();
+      return;
+    }
+
+    nextRound();
+    addEvent(`🔄 Bắt đầu vòng ${gameState.round + 1}`);
+    setPrevStats(gameState.stats);
+    setEventPhase(null);
+  };
+
+  // ── Policy select ─────────────────────────────────────────────────────────
 
   const handlePolicySelect = (policy: Policy) => {
     if (gameState.budget < policy.budgetCost || gameState.labor < policy.laborCost) {
@@ -150,29 +212,7 @@ export function GameScreen() {
     addEvent(`✅ Đã áp dụng chính sách: ${policy.name}`);
   };
 
-  const handleEndRound = () => {
-    // Random event chance
-    if (Math.random() < 0.4 && sampleEvents.length > 0) {
-      const randomEvent = sampleEvents[Math.floor(Math.random() * sampleEvents.length)];
-      setCurrentEvent(randomEvent);
-    } else {
-      nextRound();
-      addEvent(`🔄 Bắt đầu vòng ${gameState.round + 1}`);
-    }
-  };
-
-  const handleEventChoice = (choiceIndex: 0 | 1) => {
-    if (!currentEvent) return;
-
-    const choice = currentEvent.choices[choiceIndex];
-    updateStats(choice.impact);
-    if (choice.impact.budget) updateResources(choice.impact.budget, 0);
-    if (choice.impact.labor) updateResources(0, choice.impact.labor);
-    
-    addEvent(`📋 ${currentEvent.title}: ${choice.label}`);
-    setCurrentEvent(null);
-    nextRound();
-  };
+  // ── Regions for map ───────────────────────────────────────────────────────
 
   const regions = [
     { id: 'urban', name: 'Đô thị', T: gameState.stats.T + 20, P: gameState.stats.P + 15, color: '#06b6d4' },
@@ -180,6 +220,27 @@ export function GameScreen() {
     { id: 'agriculture', name: 'Nông nghiệp', T: gameState.stats.T - gameState.stats.Gap, P: gameState.stats.P - 10, color: '#10b981' },
     { id: 'rnd', name: 'R&D', T: gameState.stats.T + 15, P: gameState.stats.P, color: '#f59e0b' },
   ];
+
+  // ── Derived UI values ─────────────────────────────────────────────────────
+
+  const stabilityColor = stability > 0 ? 'text-green-400' : 'text-red-400';
+
+  const endRoundButton =
+    eventPhase === null ? (
+      <Button
+        onClick={handleEndRound}
+        className="bg-linear-to-r from-[#dc2626] to-[#f59e0b] hover:from-[#f59e0b] hover:to-[#dc2626]"
+      >
+        Kết thúc vòng
+      </Button>
+    ) : eventPhase === 'policy' ? (
+      <Button
+        onClick={handleEndRoundPolicy}
+        className="bg-linear-to-r from-[#dc2626] to-[#f59e0b] hover:from-[#f59e0b] hover:to-[#dc2626]"
+      >
+        Kết thúc vòng
+      </Button>
+    ) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -198,7 +259,7 @@ export function GameScreen() {
             <div className="flex items-center gap-4 text-sm">
               <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-background/50">
                 <Activity size={16} className="text-[#22d3ee]" />
-                <span>Vòng: {gameState.round}/15</span>
+                <span>⚡ Vòng {gameState.round}/15</span>
               </div>
               <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-background/50">
                 <Coins size={16} className="text-[#f59e0b]" />
@@ -208,6 +269,14 @@ export function GameScreen() {
                 <Users size={16} className="text-[#06b6d4]" />
                 <span>{gameState.labor}</span>
               </div>
+              <div className={`px-3 py-1 rounded-lg bg-background/50 font-semibold ${stabilityColor}`}>
+                S: {stability}
+              </div>
+              {gameState.persistentPenalty > 0 && (
+                <div className="px-3 py-1 rounded-lg bg-red-900/30 border border-red-500/40 text-red-400 text-xs">
+                  💸 Bẫy bản quyền: -{gameState.persistentPenalty}/vòng
+                </div>
+              )}
             </div>
           </div>
 
@@ -218,12 +287,7 @@ export function GameScreen() {
             >
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            <Button
-              onClick={handleEndRound}
-              className="bg-gradient-to-r from-[#dc2626] to-[#f59e0b] hover:from-[#f59e0b] hover:to-[#dc2626]"
-            >
-              Kết thúc vòng
-            </Button>
+            {endRoundButton}
           </div>
         </div>
       </div>
@@ -292,7 +356,11 @@ export function GameScreen() {
                           key={policy.id}
                           policy={policy}
                           onSelect={handlePolicySelect}
-                          disabled={gameState.budget < policy.budgetCost || gameState.labor < policy.laborCost}
+                          disabled={
+                            eventPhase !== 'policy' ||
+                            gameState.budget < policy.budgetCost ||
+                            gameState.labor < policy.laborCost
+                          }
                         />
                       ))}
                     </div>
@@ -329,11 +397,14 @@ export function GameScreen() {
       </div>
 
       {/* Event Modal */}
-      {currentEvent && (
+      {currentEvent && eventPhase === 'event' && (
         <EventModal
-          event={currentEvent}
+          event={currentEvent as any}
           onChoice={handleEventChoice}
-          onClose={() => setCurrentEvent(null)}
+          onClose={() => {
+            setCurrentEvent(null);
+            setEventPhase('policy');
+          }}
         />
       )}
     </div>

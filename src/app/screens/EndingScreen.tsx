@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { Home, RotateCcw } from 'lucide-react';
 import { useGame } from '../context/GameContext';
 import { Button } from '../components/ui/button';
+import { gameApi } from '../../lib/api';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend } from 'recharts';
 
 interface EndingType {
@@ -64,7 +65,20 @@ export function EndingScreen() {
   useEffect(() => {
     const type = searchParams.get('type') || 'success';
     setEndingData(endings[type] || endings.success);
-  }, [searchParams]);
+
+    if (gameState.playerName) {
+      gameApi.saveResult({
+        playerName: gameState.playerName,
+        characterId: gameState.selectedCharacter || '',
+        roundCompleted: gameState.round,
+        endingType: type,
+        stats: gameState.stats,
+        budgetRemaining: gameState.budget,
+      });
+    }
+
+    localStorage.removeItem('vnm2045_gameState');
+  }, []);
 
   const radarData = [
     { stat: 'Công nghệ (T)', value: gameState.stats.T, fullMark: 100 },
